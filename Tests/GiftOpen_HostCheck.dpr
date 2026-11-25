@@ -27,19 +27,18 @@ var
   Video: TFILTER_PROC_VIDEO;
   Edit: TEDIT_SECTION;
   Style, Effect, Mode: PFILTER_ITEM_SELECT;
-  FileItem, LegacyFileItem: PFILTER_ITEM_FILE;
-  Alpha, Before, Opening, Duration: PFILTER_ITEM_TRACK;
+  FileItem: PFILTER_ITEM_FILE;
+  Alpha, Before, Opening, Duration, Amount: PFILTER_ITEM_TRACK;
   PackageX, PackageY, PackageZ, PackageScale: PFILTER_ITEM_TRACK;
   EffectX, EffectY, EffectZ, EffectScale: PFILTER_ITEM_TRACK;
   Color: PFILTER_ITEM_COLOR;
   WhiteReady, CallbackFailed, CameraOn: Boolean;
   TrackCalls, TexCount, ColorVerts, AnchorW, AnchorH, CardOrder: Integer;
+  BlendMode, LightQuads: Integer;
   CameraX, CameraY: Double;
   Card: TQuad;
   Quads: TList<TQuad>;
   Digest, CardDigest: UInt64;
-  CurrentImageValue, LegacyImageValue: UTF8String;
-  RejectImageWrite: Boolean;
 
 procedure Require(Pass: Boolean; const Detail: string);
 begin
@@ -65,6 +64,11 @@ begin
   AnchorH := Height;
 end;
 
+procedure SetBlend(Mode: Integer); cdecl;
+begin
+  BlendMode := Mode;
+end;
+
 function ImageSize(Resource: PWideChar; Width, Height: PInteger): Boolean; cdecl;
 begin
   Result := SameStr(Resource,'image:C:\検査\present.png');
@@ -77,8 +81,8 @@ end;
 
 function Draw(Kind: Integer; Vertices: Pointer; Count: Integer; Resource: PWideChar): Boolean; cdecl;
 var
-  I, J: Integer;
-  C: ^TVertexColorNorm;
+  I, J, Stride: Integer;
+  C: PVertexColor;
   T: ^TVertexTexture;
   Q: TQuad;
   Saved: UInt64;
@@ -88,16 +92,26 @@ begin
     Require(WhiteReady,'white source was not initialized');
     Require((Count > 0) and (Count mod 4 = 0),'invalid vertex buffer');
     case Kind of
-      VERTEX_QUAD_COLOR_NORM:
+      VERTEX_QUAD_COLOR, VERTEX_QUAD_COLOR_NORM:
         begin
+          if Kind = VERTEX_QUAD_COLOR then
+          begin
+            Require(BlendMode = BLEND_ADD,'light must use additive blending');
+            Inc(LightQuads,Count div 4);
+            Stride := SizeOf(TVertexColor);
+          end else
+          begin
+            Require(BlendMode = BLEND_NONE,'normal geometry must use the host blend');
+            Stride := SizeOf(TVertexColorNorm);
+          end;
           Inc(ColorVerts,Count);
-          Hash(Vertices,Count*SizeOf(TVertexColorNorm));
+          Hash(Vertices,Count*Stride);
           I := 0;
           while I < Count do
           begin
             for J := 0 to 3 do
             begin
-              C := Pointer(PByte(Vertices)+(I+J)*SizeOf(TVertexColorNorm));
+              C := PVertexColor(PByte(Vertices)+(I+J)*Stride);
               Require(not IsNan(C^.Z) and not IsInfinite(C^.Z),'invalid Z');
               Require((C^.A >= 0) and (C^.A <= 1) and (C^.R <= C^.A) and
                 (C^.G <= C^.A) and (C^.B <= C^.A),'invalid premultiplied RGBA');
@@ -115,6 +129,7 @@ begin
         end;
       VERTEX_QUAD_TEXTURE:
         begin
+          Require(BlendMode = BLEND_NONE,'image must use the host blend');
           Require(SameStr(Resource,'image:C:\検査\present.png') and (Count = 4),'texture binding');
           Inc(TexCount);
           CardOrder := Quads.Count;
@@ -190,6 +205,8 @@ begin
   CallbackFailed := False;
   TexCount := 0;
   ColorVerts := 0;
+  LightQuads := 0;
+  BlendMode := BLEND_NONE;
   Quads.Clear;
   AnchorW := 0;
   AnchorH := 0;
@@ -198,6 +215,7 @@ begin
   CardDigest := 0;
   Require(Plugin^.Func_Proc_Video(@Video) = 0,'standard output was not suppressed');
   Require(WhiteReady and not CallbackFailed and (AnchorW = 380) and (AnchorH = 280),'incomplete frame');
+  Require(BlendMode = BLEND_NONE,'blend mode must be restored');
   Result := Digest;
 end;
 
@@ -213,15 +231,21 @@ begin
   Result.Z := P.X*AxisX + P.Y*AxisY + P.Z*900/Len;
 end;
 
-function Hit(const R, A, B, C: TPoint): Boolean;
+function SurfaceDepth(const R, A, B, C: TPoint; out Z: Double): Boolean;
 var D, U, V: Double;
 begin
   D := (B.Y-C.Y)*(A.X-C.X)+(C.X-B.X)*(A.Y-C.Y);
   if Abs(D) < 1E-9 then Exit(False);
   U := ((B.Y-C.Y)*(R.X-C.X)+(C.X-B.X)*(R.Y-C.Y))/D;
   V := ((C.Y-A.Y)*(R.X-C.X)+(A.X-C.X)*(R.Y-C.Y))/D;
-  Result := (U >= -1E-7) and (V >= -1E-7) and (U+V <= 1.0000001) and
-    (U*A.Z+V*B.Z+(1-U-V)*C.Z < R.Z-0.01);
+  Result := (U >= -1E-7) and (V >= -1E-7) and (U+V <= 1.0000001);
+  Z := U*A.Z+V*B.Z+(1-U-V)*C.Z;
+end;
+
+function Hit(const R, A, B, C: TPoint): Boolean;
+var Z: Double;
+begin
+  Result := SurfaceDepth(R,A,B,C,Z) and (Z < R.Z-0.01);
 end;
 
 function Covered: Integer;
@@ -292,6 +316,55 @@ begin
   Require((Front > 0) and (Back > 0),'translucent front and back geometry');
 end;
 
+function IsGold(const Q: TQuad): Boolean;
+begin
+  Result := Q.Color[0,1] > Q.Color[0,0]*0.6;
+end;
+
+procedure CheckPrintedPaper;
+var
+  List: TArray<TQuad>;
+  Pattern, Q: TQuad;
+  P: TPoint;
+  I, J, Visible: Integer;
+  Z, Nearest: Double;
+  LastGold, NearestGold: Boolean;
+begin
+  List := Quads.ToArray;
+  for I := 0 to High(List) do
+    for J := 0 to 3 do List[I].Point[J] := Project(List[I].Point[J]);
+  Visible := 0;
+  for Pattern in List do
+  begin
+    if not IsGold(Pattern) then Continue;
+    // ひし形の内側を調べ、実際に手前にある色と送出順で最後に描く色が一致するか比較する。
+    for J := 0 to 3 do
+    begin
+      P.X := (Pattern.Point[J].X*2+Pattern.Point[(J+1) mod 4].X+
+        Pattern.Point[(J+2) mod 4].X)*0.25;
+      P.Y := (Pattern.Point[J].Y*2+Pattern.Point[(J+1) mod 4].Y+
+        Pattern.Point[(J+2) mod 4].Y)*0.25;
+      Nearest := Infinity;
+      LastGold := False;
+      NearestGold := False;
+      for Q in List do
+        if SurfaceDepth(P,Q.Point[0],Q.Point[1],Q.Point[2],Z) or
+          SurfaceDepth(P,Q.Point[0],Q.Point[2],Q.Point[3],Z) then
+        begin
+          LastGold := IsGold(Q);
+          if Z < Nearest then
+          begin
+            Nearest := Z;
+            NearestGold := LastGold;
+          end;
+        end;
+      Require(LastGold = NearestGold,'printed paper pattern is drawn at the wrong depth');
+      if NearestGold then Inc(Visible);
+    end;
+  end;
+  Require(Visible >= 64,'printed paper pattern coverage');
+end;
+
 procedure SavePreview(const Name: string);
 var F: file; N: Integer;
 begin
@@ -307,7 +380,7 @@ begin
   end;
 end;
 
-function Item(const Name: string): Pointer;
+function FindItem(const Name: string): Pointer;
 var I: Integer; P: PPointer;
 begin
   I := 0;
@@ -317,75 +390,13 @@ begin
     if SameStr(PWideChar(P[1]),Name) then Exit(P);
     Inc(I);
   end;
-  raise Exception.Create('missing setting '+Name);
-end;
-
-function ReadImageValue(Obj: OBJECT_HANDLE; Effect, Name: LPCWSTR): PAnsiChar; cdecl;
-begin
   Result := nil;
-  if (Obj <> Pointer(5)) or not SameStr(Effect,'プレゼント開封:1') then Exit;
-  if SameStr(Name,'画像ファイル') then Result := PAnsiChar(CurrentImageValue);
-  if SameStr(Name,'プレゼント画像ファイル') then Result := PAnsiChar(LegacyImageValue);
 end;
 
-function WriteImageValue(Obj: OBJECT_HANDLE; Effect, Name: LPCWSTR; Value: PAnsiChar): Boolean; cdecl;
+function Item(const Name: string): Pointer;
 begin
-  Result := False;
-  if (Obj <> Pointer(5)) or not SameStr(Effect,'プレゼント開封:1') or (Value = nil) then Exit;
-  if SameStr(Name,'画像ファイル') and not RejectImageWrite then
-  begin
-    CurrentImageValue := UTF8String(Value);
-    Result := True;
-  end;
-  if SameStr(Name,'プレゼント画像ファイル') then
-  begin
-    LegacyImageValue := UTF8String(Value);
-    Result := True;
-  end;
-end;
-
-procedure CheckImageMigration;
-const
-  ImagePath = 'C:\検査\present.png';
-var
-  Button: PFILTER_ITEM_BUTTON;
-begin
-  FileItem^.Value := '';
-  LegacyFileItem^.Value := ImagePath;
-  DrawAt(0.5);
-  Require(TexCount = 1,'load legacy path');
-  FileItem^.Value := 'missing.png';
-  DrawAt(0.5);
-  Require(TexCount = 0,'new image path overrides legacy path');
-
-  Button := Item('旧画像設定を移行');
-  Require(Assigned(Button^.Callback2),'image migration button');
-  Edit.GetObjectItemValue := ReadImageValue;
-  Edit.SetObjectItemValue := WriteImageValue;
-  try
-    CurrentImageValue := '';
-    LegacyImageValue := UTF8String(ImagePath);
-    RejectImageWrite := True;
-    Button^.Callback2(@Edit,Pointer(5),'プレゼント開封:1',Button^.Name);
-    Require((CurrentImageValue = '') and (LegacyImageValue = UTF8String(ImagePath)),
-      'failed migration retains legacy path');
-    RejectImageWrite := False;
-    Button^.Callback2(@Edit,Pointer(5),'プレゼント開封:1',Button^.Name);
-    Require((CurrentImageValue = UTF8String(ImagePath)) and (LegacyImageValue = ''),
-      'migrate UTF-8 path and clear the legacy setting');
-    CurrentImageValue := 'new.png';
-    LegacyImageValue := UTF8String(ImagePath);
-    Button^.Callback2(@Edit,Pointer(5),'プレゼント開封:1',Button^.Name);
-    Require((CurrentImageValue = 'new.png') and (LegacyImageValue = ''),
-      'migration retains an explicitly selected new path');
-  finally
-    Edit.GetObjectItemValue := nil;
-    Edit.SetObjectItemValue := nil;
-  end;
-  FileItem^.Value := '';
-  LegacyFileItem^.Value := '';
-  DrawAt(0.5);
-  Require(TexCount = 0,'clear the displayed path after migration');
+  Result := FindItem(Name);
+  Require(Result <> nil,'missing setting '+Name);
 end;
 
 procedure ColorBounds(out Low, High: TPoint);
@@ -471,7 +482,7 @@ begin
   PackageScale^.Value := 100;
   DrawAt(Seconds);
   Require(Quads.Count = EffectFaces+Length(PackageFaces),'effect and package face count');
-  // Zを奥へ大きく動かした付加演出の後ろに、元の順序で包装面が並ぶ。
+  // Zを奥へ大きく動かした演出の後ろに、元の順序で包装面が並ぶ。
   for I := 0 to High(PackageFaces) do
   begin
     Face := Quads[EffectFaces+I];
@@ -487,30 +498,124 @@ begin
   Require(DrawAt(Seconds) = Initial,'restoring effect transform restores the frame');
 end;
 
+function PeakAlpha: Single;
+var
+  Face: TQuad;
+  J: Integer;
+begin
+  Result := 0;
+  for Face in Quads do
+    for J := 0 to 3 do
+      Result := Max(Result,Face.Color[J,3]);
+end;
+
+function GeometrySpan: Double;
+var
+  Lo, Hi: TPoint;
+begin
+  ColorBounds(Lo,Hi);
+  Result := Sqrt(Sqr(Hi.X-Lo.X)+Sqr(Hi.Y-Lo.Y)+Sqr(Hi.Z-Lo.Z));
+end;
+
+procedure CheckLightBehindImage;
+var
+  Q: TQuad;
+  Center: TPoint;
+  FaceIndex, I, Overlap: Integer;
+  Z: Double;
+begin
+  Require((LightQuads > 0) and (CardOrder = LightQuads),'unlit glow must be drawn before the image');
+  Center.X := (Card.Point[0].X+Card.Point[2].X)*0.5;
+  Center.Y := (Card.Point[0].Y+Card.Point[2].Y)*0.5;
+  Center.Z := (Card.Point[0].Z+Card.Point[2].Z)*0.5;
+  Center := Project(Center);
+  Overlap := 0;
+  for FaceIndex := 0 to Quads.Count-1 do
+  begin
+    Q := Quads[FaceIndex];
+    for I := 0 to 3 do Q.Point[I] := Project(Q.Point[I]);
+    if SurfaceDepth(Center,Q.Point[0],Q.Point[1],Q.Point[2],Z) or
+      SurfaceDepth(Center,Q.Point[0],Q.Point[2],Q.Point[3],Z) then
+    begin
+      Require(Z > Center.Z,'light must stay behind the image in camera depth');
+      Inc(Overlap);
+    end;
+  end;
+  Require(Overlap > 0,'light must overlap the image center');
+end;
+
+procedure CheckEffectAppearance;
+var
+  InitialSpan: Double;
+  I: Integer;
+begin
+  PackageScale^.Value := 0;
+  Effect^.Value := 2;
+  Amount^.Value := 5;
+  DrawAt(2.06);
+  InitialSpan := GeometrySpan;
+  DrawAt(2.35);
+  Require((GeometrySpan > 2.5*InitialSpan) and (PeakAlpha > 0.9),
+    'streamer length grows along its flight');
+  DrawAt(2.95);
+  Require((PeakAlpha > 0) and (PeakAlpha < 0.15),'streamer fades out near the end');
+  Amount^.Value := 100;
+  for I := 6 to 7 do
+  begin
+    Effect^.Value := I;
+    DrawAt(2.45);
+    Require(PeakAlpha > 0.4,'glow must have a visible core');
+    CheckLightBehindImage;
+    CameraOn := True;
+    CameraX := 650;
+    CameraY := -380;
+    DrawAt(2.45);
+    CheckLightBehindImage;
+    CameraOn := False;
+    CameraX := 0;
+    CameraY := 0;
+  end;
+  Effect^.Value := 11;
+  DrawAt(2.82);
+  Require((LightQuads > 100) and (PeakAlpha > 0.45),'fireworks should remain bright late in the effect');
+  DrawAt(2.98);
+  Require((PeakAlpha > 0) and (PeakAlpha < 0.12),'fireworks fade before the end');
+  PackageScale^.Value := 100;
+end;
+
 procedure Test(Init: TInit);
+const
+  PackageNames: array[0..13] of string = (
+    'リボン付きプレゼント箱','包装紙付きプレゼント箱','手提げ紙袋',
+    '宝箱','四方向展開式の箱','破裂式の箱','キャンディ包み',
+    'リボンによる直接包装','包装紙による直接包装','透明フィルム包装','バスケット包装',
+    'クリスマスの靴下','カプセルトイ','くす玉');
+  EffectNames: array[0..11] of string = (
+    'なし','紙吹雪','紙テープ','キラキラ','星','ハート','放射光','光の噴出','煙','シャボン玉','花びら','花火');
 var
   I, J, Closed, Opened, More, BaseVerts, CoverageIssues: Integer;
   D, D0, StaticCard: UInt64;
   PackageFaces: TArray<TQuad>;
+  SelectItem: PSelectItem;
 begin
   Style := Item('包装スタイル');
-  Effect := Item('付加演出スタイル');
+  Effect := Item('演出スタイル');
   FileItem := Item('画像ファイル');
-  LegacyFileItem := Item('プレゼント画像ファイル');
   PackageX := Item('包装X');
   PackageY := Item('包装Y');
   PackageZ := Item('包装Z');
   PackageScale := Item('包装拡大率');
-  EffectX := Item('付加演出X');
-  EffectY := Item('付加演出Y');
-  EffectZ := Item('付加演出Z');
-  EffectScale := Item('付加演出拡大率');
+  EffectX := Item('演出X');
+  EffectY := Item('演出Y');
+  EffectZ := Item('演出Z');
+  EffectScale := Item('演出拡大率');
   Alpha := Item('包装透明度');
   Before := Item('開封前時間');
   Opening := Item('開封時間');
-  Duration := Item('付加演出時間');
-  Mode := Item('付加演出色モード');
-  Color := Item('付加演出色');
+  Duration := Item('演出時間');
+  Amount := Item('演出量');
+  Mode := Item('演出色モード');
+  Color := Item('演出色');
   Require((Style^.Value = 0) and (Effect^.Value = 1) and (Alpha^.Value = 0),'style defaults');
   Require((PackageX^.Value = 0) and (PackageY^.Value = 0) and (PackageZ^.Value = 0) and
     (PackageScale^.Value = 100),'package transform defaults');
@@ -520,19 +625,33 @@ begin
     (Before^.Step = 0.01) and (Opening^.Step = 0.01) and (Duration^.Step = 0.01),'time defaults');
   Require(not Assigned(Plugin^.Func_Proc_Audio),'unexpected audio callback');
   Require(Plugin^.Flag = (FILTER_FLAG_VIDEO or FILTER_FLAG_INPUT or FILTER_FLAG_USERDATA),'registration flags');
-  Require(PSelectItem(PByte(Style^.List)+17*SizeOf(TFILTER_ITEM_SELECT_ITEM))^.Name = nil,'package list');
-  Require(PSelectItem(PByte(Effect^.List)+12*SizeOf(TFILTER_ITEM_SELECT_ITEM))^.Name = nil,'effect list');
+  SelectItem := PSelectItem(Style^.List);
+  for I := Low(PackageNames) to High(PackageNames) do
+  begin
+    Require(SameStr(SelectItem^.Name,PackageNames[I]) and (SelectItem^.Value = I),'package list entry');
+    Inc(SelectItem);
+  end;
+  Require(SelectItem^.Name = nil,'package list terminator');
+  SelectItem := PSelectItem(Effect^.List);
+  for I := Low(EffectNames) to High(EffectNames) do
+  begin
+    Require(SameStr(SelectItem^.Name,EffectNames[I]) and (SelectItem^.Value = I),'effect list entry');
+    Inc(SelectItem);
+  end;
+  Require(SelectItem^.Name = nil,'effect list terminator');
+  Item('演出');
+  Item('演出範囲');
+  Require(FindItem('付加演出スタイル') = nil,'old effect label is still registered');
   FileItem^.Value := '';
   DrawAt(0.5);
   Require((TexCount = 0) and (ColorVerts > 0),'initial scene without a file');
   FileItem^.Value := 'missing.png';
   DrawAt(1.45);
   Require((TexCount = 0) and (ColorVerts > 0),'missing image preserves opening');
-  CheckImageMigration;
   FileItem^.Value := 'C:\検査\present.png';
   Effect^.Value := 0;
   CoverageIssues := 0;
-  for I := 0 to 16 do
+  for I := Low(PackageNames) to High(PackageNames) do
   begin
     Style^.Value := I;
     CameraX := 0;
@@ -543,9 +662,11 @@ begin
     Require((D0 = D) and (TexCount = 1) and (ColorVerts > 0),Format('closed package %d',[I]));
     StaticCard := CardDigest;
     Closed := Covered;
+    if I = 1 then CheckPrintedPaper;
     SavePreview(Format('Win64\Verification\Style%.2d_Closed.bin',[I]));
     D := DrawAt(1.6);
     Require((D <> D0) and (TexCount = 1) and (CardDigest = StaticCard),Format('opening package %d',[I]));
+    if I = 1 then CheckPrintedPaper;
     CheckPackageTransform(1.6);
     D := DrawAt(2);
     Require((D <> D0) and (ColorVerts > 0) and (CardDigest = StaticCard),Format('open package %d',[I]));
@@ -556,6 +677,7 @@ begin
     Alpha^.Value := 50;
     DrawAt(0.5);
     Require((TexCount = 1) and (ColorVerts > 0),Format('transparent package %d',[I]));
+    if I = 1 then CheckPrintedPaper;
     if I = 0 then
     begin
       CheckTransparentOrdering;
@@ -580,9 +702,14 @@ begin
     DrawAt(2.0);
     J := Covered;
     Writeln(Format('%2d coverage closed=%2d/%2d opened=%2d/%2d',[I,Closed,More,Opened,J]));
-    if (Closed < 81) or (More < 81) or (Opened > 0) or (J > 0) then Inc(CoverageIssues);
+    if PackageNames[I] = 'バスケット包装' then
+      Require(More < 81,'basket opening exposes the gift from above')
+    else if (Closed < 81) or (More < 81) then Inc(CoverageIssues);
+    if (Opened > 0) or (J > 0) then Inc(CoverageIssues);
   end;
   Require(CoverageIssues = 0,'closed/open coverage');
+  Require((FindItem('プレゼント画像ファイル') = nil) and (FindItem('旧画像設定を移行') = nil),
+    'obsolete image settings are still registered');
   CameraOn := False;
   CameraX := 0;
   CameraY := 0;
@@ -601,6 +728,7 @@ begin
     Require(D = DrawAt(2.47),Format('effect seek %d',[I]));
     Require(D0 = DrawAt(3.00),Format('effect end %d',[I]));
   end;
+  CheckEffectAppearance;
   Effect^.Value := 1;
   D := DrawAt(2.17);
   Mode^.Value := 1;
@@ -619,9 +747,13 @@ begin
   CameraOn := True;
   DrawAt(0);
   Require(TrackCalls = 6,'2.1.17 camera API');
-  Writeln(Format('PASS: registration, 17 styles, 11 effects, seek, texture, alpha, timing and camera ABI. Coverage issues: %d',[CoverageIssues]));
-  Writeln('PASS: package-only transform, transparent Z order and legacy image migration.');
+  Writeln(Format('PASS: registration, %d styles, 11 effects, seek, texture, alpha, timing and camera ABI. Coverage issues: %d',
+    [Length(PackageNames),CoverageIssues]));
+  Writeln('PASS: basket is open at the top before opening.');
+  Writeln('PASS: package-only transform, transparent Z order and printed paper draw order.');
+  Writeln('PASS: one image file setting.');
   Writeln('PASS: independent effect transform and depth order for all 11 effects.');
+  Writeln('PASS: streamer growth, light behind the image, and sustained additive fireworks.');
 end;
 
 var
@@ -658,6 +790,7 @@ begin
           Video.DrawPoly := Draw;
           Video.SetImageData := SetWhite;
           Video.SetDefaultAnchor := SetAnchor;
+          Video.SetBlendMode := SetBlend;
           Video.GetImageResourceSize := ImageSize;
           Video.GetCameraMode := CameraMode;
           Video.GetCameraControlObject := CameraObject;

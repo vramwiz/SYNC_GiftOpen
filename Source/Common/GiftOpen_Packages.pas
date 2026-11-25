@@ -6,6 +6,8 @@ interface
 uses GiftOpen_Settings, GiftOpen_Mesh;
 
 type
+  TPaperFaceStarts = array[0..3] of Integer;
+
   TPose = record
     Pivot, Shift, Angle: TVec;
     function Apply(const Point: TVec): TVec;
@@ -14,7 +16,8 @@ type
 function Pose(const Pivot, Shift, Angles: TVec): TPose;
 procedure Panel(Mesh: TGiftMesh; const T: TPose; const A, B, C, D, Width: TVec;
   const Outer, Inner: TPaint);
-procedure BuildBoxPackage(Mesh: TGiftMesh; const S: TGiftSettings; P: Double);
+procedure BuildBoxPackage(Mesh: TGiftMesh; const S: TGiftSettings; P: Double;
+  out PaperFaces: TPaperFaceStarts);
 procedure BuildPaperBag(Mesh: TGiftMesh; const S: TGiftSettings; P: Double);
 procedure BuildBasket(Mesh: TGiftMesh; const S: TGiftSettings; P: Double);
 procedure Bow(Mesh: TGiftMesh; const At: TVec; Size, Open: Double; const Trim: TPaint);
@@ -128,7 +131,8 @@ begin
     Point[4]],T.Apply(Across)-T.Apply(V(0,0,0)),0.013,Material);
 end;
 
-procedure PrintedPaper(Mesh: TGiftMesh; const Body, Print: TPaint; P: Double);
+procedure PrintedPaper(Mesh: TGiftMesh; const Body, Print: TPaint; P: Double;
+  out PaperFaces: TPaperFaceStarts);
 const Bands = 4;
 var
   Side, Row, Col: Integer;
@@ -147,8 +151,9 @@ var
   end;
 
 begin
-  for Side := 0 to 3 do
+  for Side := Low(PaperFaces) to High(PaperFaces) do
   begin
+    PaperFaces[Side] := Mesh.Faces.Count;
     Angle := Side*Pi/2;
     Folio := Phase(P,0.04+Side*0.045,0.83+Side*0.04);
     Shift := RotateY(V(0.23*Folio,-0.10*Folio,-2.6*Folio),Angle);
@@ -304,7 +309,8 @@ begin
   end;
 end;
 
-procedure BuildBoxPackage(Mesh: TGiftMesh; const S: TGiftSettings; P: Double);
+procedure BuildBoxPackage(Mesh: TGiftMesh; const S: TGiftSettings; P: Double;
+  out PaperFaces: TPaperFaceStarts);
 var
   Body, Interior, Trim, Paper, Pattern: TPaint;
   Base, Lid, Bands: TPose;
@@ -367,7 +373,7 @@ begin
   begin
     Paper := Paint(S.Color1,S.Opacity,0);
     Pattern := Paint(S.Color2,S.Opacity,0);
-    PrintedPaper(Mesh,Paper,Pattern,P);
+    if Paper.Alpha > 0 then PrintedPaper(Mesh,Paper,Pattern,P,PaperFaces);
   end else
   begin
     Loose := Phase(P,0,0.48);
@@ -433,9 +439,9 @@ procedure BuildBasket(Mesh: TGiftMesh; const S: TGiftSettings; P: Double);
 const WickerRows = 11;
 var
   Body, Inner, Trim: TPaint;
-  Top, Bottom, A, B, Y, Z, Lower, Split: Double;
+  Top, Bottom, A, B, Y, Z, Lower: Double;
   Side, Row, Col, Sign, I: Integer;
-  Base, Lid: TPose;
+  Base: TPose;
   Handle: array[0..20] of TVec;
   Horizontal: array[0..24] of TVec;
   Upright: array[0..WickerRows] of TVec;
@@ -444,7 +450,6 @@ begin
   Inner := Shade(Body,0.62);
   Trim := Paint(S.Color2,1,1);
   Lower := Phase(P,0.18,1);
-  Split := Phase(P,0.05,0.90);
   Base := Pose(V(0,0,0),V(0,1.48*Lower,0),V(0,0,0));
   Top := -0.64;
   Bottom := 0.97;
@@ -479,10 +484,6 @@ begin
   Walls(Mesh,Base,1,Top-0.055,Top+0.035,0.085,Trim,Shade(Trim,0.79));
   for Sign in Signs do
   begin
-    Lid := Pose(V(Sign*0.96,Top,0),V(Sign*1.00*Split,-0.43*Split,0.43*Split),
-      V(0,0,-Sign*1.60*Split));
-    Panel(Mesh,Lid,V(Min(0,Sign),-0.89,-1),V(Max(0,Sign),-0.89,-1),
-      V(Max(0,Sign),-0.89,1),V(Min(0,Sign),-0.89,1),V(0,0.27,0),Body,Inner);
     for I := 0 to High(Handle) do
     begin
       A := Pi*I/High(Handle);

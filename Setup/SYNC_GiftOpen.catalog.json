@@ -3,7 +3,7 @@
         "id":  "VRAMWIZ.SYNC_GiftOpen",
         "name":  "プレゼント開封",
         "type":  "フィルタプラグイン",
-        "summary":  "17種類の立体包装から画像を取り出す演出。紙吹雪や花火など11種類の付加演出を搭載",
+        "summary":  "14種類の立体包装から画像を取り出す演出。紙吹雪や花火など11種類の演出を搭載",
         "description":  "https://raw.githubusercontent.com/vramwiz/SYNC_GiftOpen/refs/heads/main/README.md",
         "author":  "VRAMの魔術師",
         "repoURL":  "https://github.com/vramwiz/SYNC_GiftOpen/",
@@ -83,7 +83,7 @@
                             "file":  [
                                          {
                                              "path":  "{pluginsDir}/SYNC_GiftOpen/SYNC_GiftOpen.auf2",
-                                             "XXH3_128":  "c29f88264e158c7d13fab23a175cc5b9"
+                                             "XXH3_128":  "1416f2b39090ef1aa45363d28775da14"
                                          }
                                      ]
                         }

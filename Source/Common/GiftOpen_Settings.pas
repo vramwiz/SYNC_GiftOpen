@@ -4,9 +4,9 @@
 interface
 
 type
-  TGiftStyle = (gsRibbonBox, gsPaperBox, gsPaperBag, gsDrawstring, gsChest,
-    gsFlapBox, gsBurstBox, gsCandy, gsFuroshiki, gsDirectRibbon, gsDirectPaper,
-    gsFilm, gsBasket, gsStocking, gsCapsule, gsBalloon, gsKusudama);
+  TGiftStyle = (gsRibbonBox, gsPaperBox, gsPaperBag, gsChest, gsFlapBox,
+    gsBurstBox, gsCandy, gsDirectRibbon, gsDirectPaper, gsFilm, gsBasket,
+    gsStocking, gsCapsule, gsKusudama);
   TGiftEffect = (geNone, geConfetti, geStreamers, geSparkles, geStars, geHearts,
     geRays, geInnerGlow, geSmoke, geBubbles, gePetals, geFireworks);
 

@@ -1,6 +1,6 @@
 ﻿unit GiftOpen_Wraps;
 
-// 袋、布、フィルム、球殻など、曲面と折り目を持つ包装を成形する。
+// フィルム、球殻など、曲面と折り目を持つ包装を成形する。
 interface
 
 uses GiftOpen_Settings, GiftOpen_Mesh;
@@ -75,51 +75,6 @@ begin
   end;
 end;
 
-procedure Drawstring(Mesh: TGiftMesh; const Body, Trim: TPaint; P: Double);
-var
-  Mouth, Gather, Drop, Loose, Top, A: Double;
-  I, Side: Integer;
-  T: TPose;
-  Neck: array[0..24] of TVec;
-  Tail: array[0..5] of TVec;
-  R0, R1, R2, R3, R4, R5, R6: TRing;
-begin
-  Loose := Phase(P,0,0.50);
-  Drop := Phase(P,0.36,1);
-  Gather := Phase(P,0.12,0.67);
-  Top := -1+1.64*Drop;
-  Mouth := Mix(0.18,0.88,Gather);
-  T := Default(TPose);
-  R0 := Ring(Top,Mouth+0.11,Mouth+0.11);
-  R1 := Ring(Top+0.16-0.10*Drop,Mouth,Mouth);
-  R2 := Ring(Mix(-0.57,0.78,Drop),0.72,0.58);
-  R3 := Ring(Mix(-0.08,0.92,Drop),0.96,0.87);
-  R4 := Ring(Mix(0.58,1.19,Drop),0.99,0.94);
-  R5 := Ring(Mix(0.90,1.47,Drop),0.81,0.80);
-  R6 := Ring(R5.Y+0.06,0,0);
-  Skin(Mesh,[R0,R1,R2,R3,R4,R5,R6],T,0,2*Pi,0.09,32,Body,Shade(Body,0.73),waY,0.029);
-  if P <= 0.20 then
-    Skin(Mesh,[Ring(Top+0.075,0,0),Ring(Top+0.09,Mouth+0.045,Mouth+0.045)],
-      T,0,2*Pi,0.09,32,Shade(Body,0.71),Body);
-  for I := 0 to High(Neck) do
-  begin
-    A := (I/High(Neck)*2*Pi)*(1-0.22*Loose)+0.33*Loose;
-    Neck[I] := RingPoint(Ring(R1.Y,Mouth+0.032,Mouth+0.028),A,0.09);
-  end;
-  Mesh.Cord(Neck,0.026,Trim);
-  for Side in Signs do
-  begin
-    for I := 0 to High(Tail) do
-    begin
-      A := I/High(Tail);
-      Tail[I] := V(Side*(0.03+0.54*A+0.49*Loose*A),R1.Y+0.24*A+0.08*Sin(A*Pi),
-        -Mouth-0.09-0.23*A);
-    end;
-    Mesh.Cord(Tail,0.025,Trim);
-  end;
-  if Loose < 1 then Bow(Mesh,V(0,R1.Y-0.03,-Mouth-0.10),0.22,Loose,Trim);
-end;
-
 procedure Candy(Mesh: TGiftMesh; const Body, Trim: TPaint; P: Double);
 var
   I, Side: Integer;
@@ -157,55 +112,6 @@ begin
     end;
     Mesh.Cord(Tie,0.023,Trim);
   end;
-end;
-
-procedure Cloth(Mesh: TGiftMesh; const Body, Trim: TPaint; P: Double);
-var
-  Side, Row: Integer;
-  A, Q, U, B, X0, X1, Y0, Y1, Z0, Z1: Double;
-  T: TPose;
-  Inner, Face: TPaint;
-  LeftA, RightA, LeftB, RightB: TVec;
-begin
-  Inner := Shade(Body,0.70);
-  Q := Phase(P,0.23,1);
-  T := Pose(V(0,0,0),V(0,0.35*Q,0),V(0,0,0));
-  Panel(Mesh,T,V(-0.93,0.94,-0.93),V(0.93,0.94,-0.93),V(0.93,0.94,0.93),
-    V(-0.93,0.94,0.93),V(0,-0.04,0),Body,Inner);
-  for Side := 0 to 3 do
-  begin
-    A := Side*Pi/2;
-    Q := Phase(P,0.13+0.075*Side,0.86+Side*0.04);
-    T := Pose(RotateY(V(0,0.92,-0.93),A),RotateY(V(0,0.25*Q,-0.43*Q),A),
-      V(-Cos(A)*Q*1.67,0,Sin(A)*Q*1.67));
-    for Row := 0 to 11 do
-    begin
-      U := Row/12;
-      B := (Row+1)/12;
-      X0 := 0.93*(1-Power(U,4));
-      X1 := 0.93*(1-Power(B,4));
-      Y0 := Mix(0.94,-1.01,U)-Sin(Pi*U)*0.29;
-      Y1 := Mix(0.94,-1.01,B)-Sin(Pi*B)*0.29;
-      Z0 := -0.93+Power(U,3)*0.93;
-      Z1 := -0.93+Power(B,3)*0.93;
-      LeftA := RotateY(V(-X0,Y0,Z0-X0*0.025),A);
-      RightA := RotateY(V(X0,Y0,Z0+X0*0.025),A);
-      LeftB := RotateY(V(-X1,Y1,Z1-X1*0.025),A);
-      RightB := RotateY(V(X1,Y1,Z1+X1*0.025),A);
-      Face := Shade(Body,0.92+0.15*Sin(U*Pi*3+Side*0.4));
-      if Row mod 5 = 1 then Face := Paint(Trim.Color,Body.Alpha,Body.Finish);
-      Mesh.Quad(T.Apply(LeftB),T.Apply(LeftA),T.Apply(RightA),T.Apply(RightB),Face);
-      Mesh.Quad(T.Apply(RightB+V(0,0.023,0)),T.Apply(RightA+V(0,0.023,0)),
-        T.Apply(LeftA+V(0,0.023,0)),T.Apply(LeftB+V(0,0.023,0)),Inner);
-      Mesh.Quad(T.Apply(LeftA),T.Apply(LeftB),T.Apply(LeftB+V(0,0.023,0)),
-        T.Apply(LeftA+V(0,0.023,0)),Face);
-      Mesh.Quad(T.Apply(RightB),T.Apply(RightA),T.Apply(RightA+V(0,0.023,0)),
-        T.Apply(RightB+V(0,0.023,0)),Face);
-    end;
-  end;
-  Q := Phase(P,0,0.48);
-  if P < 1 then
-    Bow(Mesh,V(0.40*Q,-1.09-0.58*Q,0),0.28,Q,Trim);
 end;
 
 procedure DirectWrap(Mesh: TGiftMesh; Style: TGiftStyle; const Body, Trim: TPaint; P: Double);
@@ -341,69 +247,50 @@ end;
 
 procedure Globe(Mesh: TGiftMesh; Style: TGiftStyle; const Body, Second, Trim: TPaint; P: Double);
 var
-  I, J, Sign, Pieces: Integer;
-  A, Theta, Q, Shrink, Radius, Sweep, Trans: Double;
+  I, J, Sign, Divisions: Integer;
+  A, Theta, Q, Radius, Sweep, Trans: Double;
   Rings: array[0..12] of TRing;
   T: TPose;
   Piece: TPaint;
   Pivot, Shift, Angles: TVec;
   Tail: array[0..10] of TVec;
 begin
-  case Style of
-    gsCapsule, gsKusudama: Pieces := 2;
-  else
-    Pieces := 8;
-  end;
-  for I := 0 to Pieces-1 do
+  for I := 0 to 1 do
   begin
-    A := I*2*Pi/Pieces;
-    Sweep := 2*Pi/Pieces;
     Sign := 2*(I mod 2)-1;
     Q := Phase(P,0.08+0.014*I,0.94+0.007*I);
     Piece := Body;
-    Shrink := 1;
-    case Style of
-      gsCapsule:
-        begin
-          // 二つの半球は同じ赤道から上下へ分離する。
-          A := 0;
-          Sweep := 2*Pi;
-          Pivot := V(0,0,0);
-          Shift := V(Sign*1.32*Q,Sign*1.92*Q,0.48*Q);
-          Angles := V(Sign*0.26*Q,0,-Sign*0.72*Q);
-          if Sign = 1 then Piece := Second;
-        end;
-      gsKusudama:
-        begin
-          A := -Pi/2+I*Pi;
-          Pivot := V(0,-0.95,0);
-          Shift := V(-Sign*0.22*Q,-1.27*Q,0.72*Q);
-          Angles := V(0.13*Q,0,Sign*1.35*Q);
-          if I = 1 then Piece := Shade(Body,0.86);
-        end;
-    else
-      begin
-        Pivot := V(0,0,0);
-        Shift := V(2.2*Q*Cos(A+0.28),(-0.65+1.55*GiftRandom(I,0))*Q,
-          2.3*Q*Sin(A+0.28));
-        Angles := V(2.5*Q,-2.3*Q,1.7*Q);
-        Shrink := 1-Q;
-        Piece := Shade(Body,0.88+0.24*GiftRandom(I,1));
-      end;
+    if Style = gsCapsule then
+    begin
+      // 二つの半球は同じ赤道から上下へ分離する。
+      A := 0;
+      Sweep := 2*Pi;
+      Divisions := 36;
+      Pivot := V(0,0,0);
+      Shift := V(Sign*1.32*Q,Sign*1.92*Q,0.48*Q);
+      Angles := V(Sign*0.26*Q,0,-Sign*0.72*Q);
+      if Sign = 1 then Piece := Second;
+    end else
+    begin
+      A := -Pi/2+I*Pi;
+      Sweep := Pi;
+      Divisions := 18;
+      Pivot := V(0,-0.95,0);
+      Shift := V(-Sign*0.22*Q,-1.27*Q,0.72*Q);
+      Angles := V(0.13*Q,0,Sign*1.35*Q);
+      if I = 1 then Piece := Shade(Body,0.86);
     end;
     T := Pose(Pivot,Shift,Angles);
     for J := 0 to High(Rings) do
     begin
       Theta := Pi*J/High(Rings);
       if Style = gsCapsule then Theta := Theta*0.5;
-      Radius := Sin(Theta)*Shrink;
-      Trans := -Cos(Theta)*Shrink;
+      Radius := Sin(Theta);
+      Trans := -Cos(Theta);
       if (Style = gsCapsule) and (Sign = 1) then Trans := -Trans;
-      if Style = gsBalloon then Radius := Radius*(0.89-0.16*Trans);
       Rings[J] := Ring(Trans,Radius,Radius);
     end;
-    Skin(Mesh,Rings,T,A,Sweep,0,Max(4,36 div Pieces)*Ord(Style <> gsCapsule)+
-      36*Ord(Style=gsCapsule),Piece,Shade(Piece,0.71),waY,0.026);
+    Skin(Mesh,Rings,T,A,Sweep,0,Divisions,Piece,Shade(Piece,0.71),waY,0.026);
     if Style = gsCapsule then
       Skin(Mesh,[Ring(Sign*0.017,1.005,1.005),Ring(Sign*0.059,1.008,1.008)],
         T,0,2*Pi,0,36,Shade(Piece,1.30),Piece,waY,0.025);
@@ -421,13 +308,10 @@ begin
       Mesh.Strip(Tail,V(0.074,0,0),0.013,Trim);
     end;
   end;
-  if Style in [gsBalloon,gsKusudama] then
+  if Style = gsKusudama then
   begin
     Q := Phase(P,0.09,0.85);
     T := Pose(V(0,0.96,0),V(1.32*Q,1.22*Q,0.26*Q),V(0,0,1.74*Q));
-    if Style = gsBalloon then
-      Skin(Mesh,[Ring(0.925,0.04,0.04),Ring(1.08,0.10,0.09),Ring(1.11,0.10,0.09)],
-        T,0,2*Pi,0,14,Body,Body,waY,0.012);
     for J := 0 to High(Tail) do
     begin
       Theta := J/High(Tail);
@@ -444,13 +328,11 @@ begin
   Body := Paint(S.Color1,S.Opacity,1);
   Trim := Paint(S.Color2,1,1);
   case S.Style of
-    gsDrawstring: Drawstring(Mesh,Body,Trim,P);
     gsCandy: Candy(Mesh,Shade(Body,1.04),Trim,P);
-    gsFuroshiki: Cloth(Mesh,Body,Trim,P);
     gsDirectRibbon, gsDirectPaper: DirectWrap(Mesh,S.Style,Body,Trim,P);
     gsFilm: DirectWrap(Mesh,S.Style,Paint(S.Color1,S.Opacity,2),Trim,P);
     gsStocking: Stocking(Mesh,Body,Trim,P);
-    gsCapsule, gsBalloon, gsKusudama: Globe(Mesh,S.Style,Paint(S.Color1,S.Opacity,2),
+    gsCapsule, gsKusudama: Globe(Mesh,S.Style,Paint(S.Color1,S.Opacity,2),
       Paint(S.Color2,S.Opacity,2),Trim,P);
   end;
 end;

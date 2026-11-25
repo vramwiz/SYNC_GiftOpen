@@ -4,16 +4,19 @@
 // ホストの画像・カメラ・編集データは現在のコールバックの間だけ参照する。
 interface
 
-uses AviUtl2FilterTypes, GiftOpen_Mesh, GiftOpen_Settings, System.Generics.Defaults;
+uses AviUtl2FilterTypes, GiftOpen_Mesh, GiftOpen_Settings, GiftOpen_Packages,
+  System.Generics.Defaults;
 
 type
   TDrawPart = (dpImage, dpPackage, dpEffect);
+  TDrawPass = (dpassOpaque, dpassBackLight, dpassSorted);
   TDrawOrder = record
     Face: Integer;
     Depth: Double;
-    Pass, Finish: Byte;
+    Pass: TDrawPass;
+    Finish, PaperOrder: Byte;
     Part: TDrawPart;
-    Textured: Boolean;
+    Textured, Emissive: Boolean;
   end;
 
   TGiftRenderer = class
@@ -22,10 +25,12 @@ type
     FPackage: TGiftSettings;
     FPackageProgress: Double;
     FPackageCount: Integer;
+    FPaperFaces: TPaperFaceStarts;
     FHasPackage: Boolean;
     FCompare: IComparer<TDrawOrder>;
     FOrder: TArray<TDrawOrder>;
     FColor: TArray<TVertexColorNorm>;
+    FLight: TArray<TVertexColor>;
     FTexture: TArray<TVertexTexture>;
     procedure BuildPackage(const S: TGiftSettings; Opening: Double);
     procedure AddImage(Video: PFILTER_PROC_VIDEO; const S: TGiftSettings;
@@ -43,14 +48,19 @@ type
 implementation
 
 uses
-  System.Math, System.SysUtils, System.Generics.Collections, GiftOpen_Packages, GiftOpen_Wraps, GiftOpen_Effects;
+  System.Math, System.SysUtils, System.Generics.Collections, GiftOpen_Wraps, GiftOpen_Effects;
 
 type
   TDrawTransform = record
     Offset: TVec;
-    Scale, DepthOffset: Double;
+    Scale: Double;
     Active: Boolean;
   end;
+
+  TPaperPlane = record
+    Normal, Point: TVec;
+  end;
+  TPaperPlanes = array[Low(TPaperFaceStarts)..High(TPaperFaceStarts)] of TPaperPlane;
 
 const
   WhitePixel: TPIXEL_RGBA = (R:255; G:255; B:255; A:255);
@@ -66,13 +76,49 @@ begin
     -P.X*0.266731437+P.Y*0.182016730+P.Z*0.946427119);
 end;
 
-function DrawTransform(const Offset, DepthAxis: TVec; Scale: Double): TDrawTransform;
+function DrawTransform(const Offset: TVec; Scale: Double): TDrawTransform;
 begin
   Result.Offset := Offset;
   Result.Scale := Scale;
-  // 整列は4頂点の深度の合計を使う。
-  Result.DepthOffset := 4*Dot(DepthAxis,Offset);
   Result.Active := (Scale <> 1) or (Offset.X <> 0) or (Offset.Y <> 0) or (Offset.Z <> 0);
+end;
+
+function BuildPaperPlanes(Mesh: TGiftMesh; const PaperFaces: TPaperFaceStarts;
+  const Axis: TVec; const Transform: TDrawTransform; out Planes: TPaperPlanes): Integer;
+var
+  FirstFace: Integer;
+  Face: TFace;
+  N: TVec;
+  Facing: Double;
+begin
+  Result := 0;
+  for FirstFace in PaperFaces do
+  begin
+    Face := Mesh.Faces[FirstFace];
+    N := UnitVector(Cross(ModelToHost(Face.P[1]-Face.P[0]),ModelToHost(Face.P[2]-Face.P[0])));
+    Facing := Dot(N,Axis);
+    if Abs(Facing) < 1E-7 then Continue;
+    if Facing < 0 then N := N*(-1);
+    Planes[Result].Normal := N;
+    Planes[Result].Point := ModelToHost(Face.P[0])*Transform.Scale+Transform.Offset;
+    Inc(Result);
+  end;
+end;
+
+function PaperOrder(const Center: TVec; const Planes: TPaperPlanes; Count: Integer): Byte;
+var
+  I: Integer;
+  Distance: Double;
+begin
+  Result := 0;
+  for I := 0 to Count-1 do
+  begin
+    Distance := Dot(Center-Planes[I].Point,Planes[I].Normal);
+    // 各面で区切った領域を、奥・面上・手前の順に並べる。
+    Result := Result*3;
+    if Distance < -1E-7 then Inc(Result,2)
+    else if Distance <= 1E-7 then Inc(Result);
+  end;
 end;
 
 function FindLegacyCamera(Video: PFILTER_PROC_VIDEO; Frame: Integer): OBJECT_HANDLE;
@@ -218,9 +264,10 @@ end;
 
 function CompareOrder(const A, B: TDrawOrder): Integer;
 begin
-  if A.Pass <> B.Pass then Exit(Integer(A.Pass)-B.Pass);
-  if A.Pass <> 0 then
+  if A.Pass <> B.Pass then Exit(Ord(A.Pass)-Ord(B.Pass));
+  if A.Pass <> dpassOpaque then
   begin
+    if A.PaperOrder <> B.PaperOrder then Exit(Integer(A.PaperOrder)-B.PaperOrder);
     if A.Depth > B.Depth then Exit(-1);
     if A.Depth < B.Depth then Exit(1);
   end;
@@ -255,7 +302,7 @@ begin
   FMesh.Start(V(S.Width*0.5,S.Height*0.5,S.Depth*0.5));
   case S.Style of
     gsRibbonBox, gsPaperBox, gsChest, gsFlapBox, gsBurstBox:
-      BuildBoxPackage(FMesh,S,Opening);
+      BuildBoxPackage(FMesh,S,Opening,FPaperFaces);
     gsPaperBag: BuildPaperBag(FMesh,S,Opening);
     gsBasket: BuildBasket(FMesh,S,Opening);
   else
@@ -272,10 +319,9 @@ procedure TGiftRenderer.AddImage(Video: PFILTER_PROC_VIDEO; const S: TGiftSettin
   out Resource: string);
 const
   ImageFit: array[TGiftStyle,0..1] of Double = (
-    (0.78,0.73),(0.74,0.73),(0.65,0.57),(0.50,0.51),(0.75,0.53),
-    (0.72,0.72),(0.76,0.73),(0.38,0.49),(0.60,0.57),(0.68,0.74),
-    (0.70,0.70),(0.70,0.70),(0.68,0.54),(0.37,0.53),(0.63,0.62),
-    (0.54,0.60),(0.62,0.64));
+    (0.78,0.73),(0.74,0.73),(0.65,0.57),(0.75,0.53),(0.72,0.72),
+    (0.76,0.73),(0.38,0.49),(0.68,0.74),(0.70,0.70),(0.70,0.70),
+    (0.68,0.54),(0.37,0.53),(0.63,0.62),(0.62,0.64));
 var
   Width, Height: Integer;
   Factor, X, Y, CenterX: Double;
@@ -303,13 +349,16 @@ end;
 procedure TGiftRenderer.DrawFaces(Video: PFILTER_PROC_VIDEO; const Resource: string;
   const Axis: TVec; const S: TGiftSettings; EffectStart: Integer; UseOpaquePass: Boolean);
 var
-  FirstFace, Count, I, J, Start, Used: Integer;
+  FirstFace, Count, I, J, Start, Used, PlaneCount: Integer;
   Entry: TDrawOrder;
   Face: TFace;
-  P, N: TVec;
+  P, N, Center, EffectOffset: TVec;
   R, G, B, Alpha, Lighting: Double;
   Transforms: array[TDrawPart] of TDrawTransform;
   Transform: ^TDrawTransform;
+  Planes: TPaperPlanes;
+  Vertex: PVertexColor;
+  BackLight, AdditiveEffect: Boolean;
 begin
   FirstFace := 0;
   if S.PackageScale = 0 then FirstFace := FPackageCount;
@@ -319,12 +368,23 @@ begin
   begin
     SetLength(FOrder,Max(2048,2*Count));
     SetLength(FColor,Length(FOrder)*4);
+    SetLength(FLight,Length(FOrder)*4);
     SetLength(FTexture,Length(FOrder)*4);
   end;
-  // 包装と付加演出の変換は、それぞれ出力座標の軸に沿って適用する。
+  // 包装と演出の変換は、それぞれ出力座標の軸に沿って適用する。
   Transforms[dpImage] := Default(TDrawTransform);
-  Transforms[dpPackage] := DrawTransform(V(S.PackageX,S.PackageY,S.PackageZ),Axis,S.PackageScale);
-  Transforms[dpEffect] := DrawTransform(V(S.EffectX,S.EffectY,S.EffectZ),Axis,S.EffectScale);
+  Transforms[dpPackage] := DrawTransform(V(S.PackageX,S.PackageY,S.PackageZ),S.PackageScale);
+  BackLight := S.Effect in [geRays,geInnerGlow];
+  AdditiveEffect := BackLight or (S.Effect = geFireworks);
+  EffectOffset := V(S.EffectX,S.EffectY,S.EffectZ);
+  // 光の面を画像から視線の奥へ離し、カメラの深度でも画像と重ねられるようにする。
+  if BackLight then EffectOffset := EffectOffset+Axis*(S.Depth*0.16*S.EffectScale);
+  Transforms[dpEffect] := DrawTransform(EffectOffset,S.EffectScale);
+  // ホスト深度を使えない場合は、箱の大きな面が包装紙の柄を上書きしないようにする。
+  PlaneCount := 0;
+  if not UseOpaquePass and (S.Style = gsPaperBox) and (S.PackageScale > 0) and
+    (S.Opacity > 0) then
+    PlaneCount := BuildPaperPlanes(FMesh,FPaperFaces,Axis,Transforms[dpPackage],Planes);
   for I := FirstFace to FMesh.Faces.Count-1 do
   begin
     Face := FMesh.Faces[I];
@@ -333,17 +393,22 @@ begin
     else if I >= EffectStart then Entry.Part := dpEffect
     else Entry.Part := dpImage;
     Entry.Textured := Face.Textured;
+    Entry.Emissive := (Entry.Part = dpEffect) and AdditiveEffect;
     Entry.Finish := Face.Paint.Finish;
-    Entry.Pass := 1;
+    Entry.Pass := dpassSorted;
+    Entry.PaperOrder := 0;
     Entry.Depth := 0;
     if UseOpaquePass and (not Face.Textured) and (Face.Paint.Alpha >= 1) and
-      (Face.Paint.Finish <> 3) then Entry.Pass := 0
+      (Face.Paint.Finish <> 3) then Entry.Pass := dpassOpaque
     else
     begin
-      Entry.Depth := Dot(Axis,ModelToHost(Face.P[0]+Face.P[1]+Face.P[2]+Face.P[3]));
+      if Entry.Emissive and BackLight then Entry.Pass := dpassBackLight;
+      Center := ModelToHost((Face.P[0]+Face.P[1]+Face.P[2]+Face.P[3])*0.25);
       Transform := @Transforms[Entry.Part];
       if Transform^.Active then
-        Entry.Depth := Entry.Depth*Transform^.Scale+Transform^.DepthOffset;
+        Center := Center*Transform^.Scale+Transform^.Offset;
+      Entry.Depth := Dot(Axis,Center);
+      if PlaneCount > 0 then Entry.PaperOrder := PaperOrder(Center,Planes,PlaneCount);
     end;
     FOrder[I-FirstFace] := Entry;
   end;
@@ -360,7 +425,8 @@ begin
     Used := 0;
     I := Start;
     while (I < Count) and (FOrder[I].Pass = Entry.Pass) and
-      (FOrder[I].Textured = Entry.Textured) and (FOrder[I].Finish = Entry.Finish) do
+      (FOrder[I].Textured = Entry.Textured) and (FOrder[I].Finish = Entry.Finish) and
+      (FOrder[I].Emissive = Entry.Emissive) do
     begin
       Face := FMesh.Faces[FOrder[I].Face];
       Transform := @Transforms[FOrder[I].Part];
@@ -391,16 +457,21 @@ begin
         end else
         begin
           Alpha := Face.Paint.Alpha*Face.Weight[J];
-          FColor[Used].X := P.X;
-          FColor[Used].Y := P.Y;
-          FColor[Used].Z := P.Z;
-          FColor[Used].R := R*Alpha;
-          FColor[Used].G := G*Alpha;
-          FColor[Used].B := B*Alpha;
-          FColor[Used].A := Alpha;
-          FColor[Used].NX := N.X;
-          FColor[Used].NY := N.Y;
-          FColor[Used].NZ := N.Z;
+          if Entry.Emissive then Vertex := @FLight[Used]
+          else
+          begin
+            Vertex := PVertexColor(@FColor[Used]);
+            FColor[Used].NX := N.X;
+            FColor[Used].NY := N.Y;
+            FColor[Used].NZ := N.Z;
+          end;
+          Vertex^.X := P.X;
+          Vertex^.Y := P.Y;
+          Vertex^.Z := P.Z;
+          Vertex^.R := R*Alpha;
+          Vertex^.G := G*Alpha;
+          Vertex^.B := B*Alpha;
+          Vertex^.A := Alpha;
         end;
         Inc(Used);
       end;
@@ -408,6 +479,15 @@ begin
     end;
     if Entry.Textured then
       Video^.DrawPoly(VERTEX_QUAD_TEXTURE,@FTexture[0],Used,PWideChar(Resource))
+    else if Entry.Emissive then
+    begin
+      if Assigned(Video^.SetBlendMode) then Video^.SetBlendMode(BLEND_ADD);
+      try
+        Video^.DrawPoly(VERTEX_QUAD_COLOR,@FLight[0],Used,nil);
+      finally
+        if Assigned(Video^.SetBlendMode) then Video^.SetBlendMode(BLEND_NONE);
+      end;
+    end
     else
       Video^.DrawPoly(VERTEX_QUAD_COLOR_NORM,@FColor[0],Used,nil);
     Start := I;

@@ -61,7 +61,6 @@ var
   I, Steps: Integer;
   A, R, S, C, Depth: Double;
   P0, P1, Back, Tip, U, W: TVec;
-  Path: array[0..12] of TVec;
   Outline: array[0..20] of TVec;
 begin
   U := Spin(V(1,0,0),Angles);
@@ -72,16 +71,6 @@ begin
       Mesh.Plate(Center-U*Size-W*(Size*0.49),Center-U*Size+W*(Size*0.49),
         Center+U*Size+W*(Size*0.49),Center+U*Size-W*(Size*0.49),Back*0.52,
         Material,Shade(Material,0.85));
-    geStreamers:
-      begin
-        for I := 0 to High(Path) do
-        begin
-          A := I/High(Path);
-          Path[I] := Center+Spin(V(Size*Sin(2*Pi*A)*0.70,Size*(4.4*A-2.2),
-            Size*0.78*Cos(2*Pi*A)),Angles);
-        end;
-        Mesh.Strip(Path,U*(Size*0.25),Size*0.059,Material);
-      end;
     geStars, geSparkles, geHearts, gePetals:
       begin
         case Effect of
@@ -149,75 +138,119 @@ begin
   end;
 end;
 
-procedure LightBurst(Mesh: TGiftMesh; const S: TGiftSettings; const Time: TGiftTime);
+procedure Streamers(Mesh: TGiftMesh; const S: TGiftSettings; Progress: Double);
 var
-  I, Count: Integer;
-  Angle, Radius, Q, Wing, Size, Fade: Double;
-  Root, Dir, Across, Tip: TVec;
-  Material: TPaint;
+  I, J, Count: Integer;
+  Start, Q, A, Speed, Lift, Head, Tail, T, Ripple, Width, Fade: Double;
+  Direction, Side, Across: TVec;
+  Path: array[0..14] of TVec;
 begin
-  Q := Time.EffectProgress;
-  Fade := (1-Q)*(0.48+0.52*Sin(Pi*Sqrt(Q)))*(0.55+0.45*Min(1.0,S.Amount));
-  Radius := (1.25+1.95*Smooth(Q))*S.Range;
-  if S.Effect = geInnerGlow then
-  begin
-    Material := Paint(EffectColor(S,0),0.63*Fade,3);
-    Root := V(0,0.20,0.24);
-    SoftDisc(Mesh,Root,V(1,0,0),V(0,1,0),0.61*Radius,1.14,Material);
-    SoftDisc(Mesh,Root,V(0,0,1),V(0,1,0),0.63*Radius,1.14,Material);
-    Count := Max(3,Round(13*S.Amount));
-  end else Count := Max(4,Round(23*S.Amount));
+  Count := Max(1,Round(18*S.Amount));
   for I := 0 to Count-1 do
   begin
-    Angle := (I+GiftRandom(I,4)*0.65)*2*Pi/Count + 0.37*Q;
-    Wing := 0.035+0.09*GiftRandom(I,5);
-    Dir := V(Cos(Angle),Sin(Angle),0.58*(2*GiftRandom(I,8)-1));
-    Root := Dir*0.17;
-    if S.Effect = geInnerGlow then
+    Start := 0;
+    if I > 0 then Start := 0.19*GiftRandom(I,2);
+    Q := (Progress-Start)/(1-Start);
+    if Q < 0 then Continue;
+    A := 2*Pi*(I+0.7*GiftRandom(I,1))/Count;
+    Speed := S.Range*(1.2+1.48*GiftRandom(I,3));
+    Lift := S.Range*(2.8+1.46*GiftRandom(I,5));
+    Direction := V(Cos(A),0,0.65*Sin(A));
+    Side := V(-Sin(A),0,0.65*Cos(A));
+    Width := 0.016+0.018*GiftRandom(I,4);
+    Across := UnitVector(Cross(Direction,V(0,-0.85,0.4)))*Width;
+    Head := Q+0.012;
+    // 先端が飛んだ軌道を帯が追い、伸び切った後は末端も飛び出す。
+    Tail := Max(0.0,Head-0.43);
+    for J := 0 to High(Path) do
     begin
-      Root := V(0,0.34,0.23);
-      Dir.Y := -Abs(Dir.Y)*0.89-0.2;
-      Dir.X := Dir.X*0.76;
+      T := Mix(Tail,Head,J/High(Path));
+      Ripple := 0.10*Sin(39*T+A)*Smooth(T/0.23);
+      Path[J] := V(0,-0.10-Lift*T+3.05*S.Range*Sqr(T),0.16)+
+        Direction*(Speed*(1-Exp(-1.6*T)))+Side*Ripple;
     end;
-    Size := Radius*(0.55+0.45*GiftRandom(I,2));
-    Across := UnitVector(Cross(Dir,V(0,0,1)))*(Wing*Size);
-    Tip := Root+Dir*Size;
-    Material := Paint(EffectColor(S,I),Fade*(0.26+0.36*GiftRandom(I,1)),3);
-    Mesh.SoftTri(Root+Across*0.14,Tip,Tip+Across,Material,0.68,0,0);
-    Mesh.SoftTri(Root-Across*0.14,Tip-Across,Tip,Material,0.68,0,0);
-    Mesh.SoftTri(Root-Across*0.14,Tip,Root+Across*0.14,Material,0.68,0,0.68);
+    Fade := 1-Smooth((Q-0.57)/0.43);
+    Mesh.Strip(Path,Across,0.009,Paint(EffectColor(S,I),Fade,0));
+  end;
+end;
+
+procedure LightBurst(Mesh: TGiftMesh; const S: TGiftSettings; Progress: Double);
+var
+  I, Count: Integer;
+  Angle, Radius, Width, Length, Fade: Double;
+  Root, Dir, Across, Core, Tip: TVec;
+  Material: TPaint;
+  Rising: Boolean;
+begin
+  Rising := S.Effect = geInnerGlow;
+  Fade := (0.5+0.5*Smooth(Progress/0.18))*(1-Smooth((Progress-0.50)/0.50))*
+    (0.40+0.60*Min(1.0,S.Amount));
+  Radius := (1.08+1.84*Smooth(Progress))*S.Range;
+  Root := V(0,0,0);
+  if Rising then
+  begin
+    Root := V(0,0.36,0);
+    Count := Max(2,Round(13*S.Amount));
+    SoftDisc(Mesh,Root+V(0,-0.20*Radius,0),V(1,0,0),V(0,1,0),0.53*Radius,1.55,
+      Paint(EffectColor(S,0),0.47*Fade,3));
+  end else
+  begin
+    Count := Max(3,Round(19*S.Amount));
+    SoftDisc(Mesh,Root,V(1,0,0),V(0,1,0),0.61*Radius,1,
+      Paint(EffectColor(S,0),0.34*Fade,3));
+  end;
+  for I := 0 to Count-1 do
+  begin
+    Angle := (I+GiftRandom(I,4)*0.65)*2*Pi/Count+0.31*Progress;
+    if Rising then Angle := -Pi/2+((I+0.7*GiftRandom(I,4))/Count-0.5)*2.32;
+    Dir := V(Cos(Angle),Sin(Angle),0);
+    Length := Radius*(0.62+0.38*GiftRandom(I,2));
+    Width := Length*(0.071+0.081*GiftRandom(I,5));
+    Across := V(-Dir.Y,Dir.X,0)*Width;
+    Core := Root+Dir*(Length*0.46);
+    Tip := Root+Dir*Length;
+    Material := Paint(EffectColor(S,I),Fade*(0.33+0.34*GiftRandom(I,1)),3);
+    Mesh.SoftTri(Root,Core-Across,Core,Material,0.18,0,1);
+    Mesh.SoftTri(Root,Core,Core+Across,Material,0.18,1,0);
+    Mesh.SoftTri(Core,Core-Across,Tip,Material,1,0,0);
+    Mesh.SoftTri(Core,Tip,Core+Across,Material,1,0,0);
   end;
 end;
 
 procedure Fireworks(Mesh: TGiftMesh; const S: TGiftSettings; const Time: TGiftTime);
 var
   Burst, I, Count: Integer;
-  P, Stagger, A, Lift, Radius, Z, Fade: Double;
+  P, Stagger, A, Radius, Z, Fade, Distance: Double;
   Origin, Dir, Head, Tail, Across: TVec;
-  Material: TPaint;
+  Material, Spark: TPaint;
 begin
-  Count := Max(3,Round(25*S.Amount));
+  Count := Max(3,Round(38*S.Amount));
   for Burst := 0 to 2 do
   begin
-    Stagger := Burst*0.14;
+    Stagger := Burst*0.16;
     P := (Time.EffectProgress-Stagger)/(1-Stagger);
     if P < 0 then Continue;
-    Lift := 0.33 + 0.61*GiftRandom(Burst,8);
-    Origin := V((Burst-1)*1.55*S.Range,-Lift*S.Range,0.22+0.34*Burst);
-    Radius := (0.10+1.55*(1-Sqr(1-P)))*S.Range;
+    Origin := V((1-Burst)*1.22*S.Range,(-0.63-0.56*GiftRandom(Burst,8))*S.Range,0.10+0.22*Burst);
+    Radius := (0.21+1.62*(1-Sqr(1-P)))*S.Range;
     for I := 0 to Count-1 do
     begin
       A := 2*Pi*(I+0.30*GiftRandom(I,Burst))/Count;
       Z := 2*GiftRandom(I,8+Burst)-1;
       Dir := V(Cos(A)*Sqrt(1-Z*Z),Sin(A)*Sqrt(1-Z*Z),Z);
-      Head := Origin+Dir*(Radius*(0.73+0.27*GiftRandom(I,11)))+V(0,0.74*P*P,0);
-      Tail := Head-Dir*(S.Range*(0.11+0.34*(1-P)));
-      Across := UnitVector(Cross(Dir,V(0,0,1)))*(0.012+0.011*(1-P));
-      Fade := Sqr(1-P)*(0.77+0.23*Sin(I+P*37));
-      Material := Paint(EffectColor(S,Burst),Fade,3);
-      Mesh.SoftTri(Tail,Head-Across,Head+Across,Material,0,1,0.76);
-      if (I mod 3) = 0 then
-        ParticleShape(Mesh,geSparkles,Head,V(0,0,A),0.039+0.023*(1-P),Material);
+      Distance := Radius*(0.69+0.31*GiftRandom(I,11));
+      Head := Origin+Dir*Distance+V(0,0.64*S.Range*Sqr(P),0);
+      Tail := Head-Dir*Min(Distance,S.Range*(0.18+0.47*(1-P)));
+      Across := UnitVector(Cross(Dir,V(0,0,1)))*(0.025+0.024*(1-P));
+      Fade := (1-Smooth((P-0.60)/0.40))*(0.88+0.12*Sin(I+P*31));
+      Material := Paint(EffectColor(S,Burst*2+1),Fade,3);
+      Mesh.SoftTri(Tail,Head-Across,Head,Material,0,0,1);
+      Mesh.SoftTri(Tail,Head,Head+Across,Material,0,1,0);
+      if I mod 2 = 0 then
+      begin
+        Spark := Material;
+        if S.AutoColor then Spark.Color := $FFEDC8;
+        ParticleShape(Mesh,geSparkles,Head,V(0,0,A),0.057+0.033*(1-P),Spark);
+      end;
     end;
   end;
 end;
@@ -231,14 +264,14 @@ var
 begin
   if not Time.EffectActive then Exit;
   case S.Effect of
-    geRays, geInnerGlow: begin LightBurst(Mesh,S,Time); Exit; end;
+    geStreamers: begin Streamers(Mesh,S,Time.EffectProgress); Exit; end;
+    geRays, geInnerGlow: begin LightBurst(Mesh,S,Time.EffectProgress); Exit; end;
     geFireworks: begin Fireworks(Mesh,S,Time); Exit; end;
   end;
   case S.Effect of
     geConfetti: Density := 65;
     geSparkles: Density := 39;
     geSmoke, geBubbles: Density := 17;
-    geStreamers: Density := 24;
   else
     Density := 31;
   end;
@@ -262,11 +295,6 @@ begin
     case S.Effect of
       geConfetti:
         Origin.Y := Origin.Y + 0.89*Q*Q + 0.13*Sin(A+4*Q);
-      geStreamers:
-        begin
-          Size := Size*1.24;
-          Origin.Y := Origin.Y+0.66*Q*Q;
-        end;
       geStars, geHearts, gePetals:
         begin
           Size := Size*1.52;

@@ -126,6 +126,10 @@ type
   TOBJECT_IMAGE_PARAM = record
     X, Y, Z, RX, RY, RZ, SX, SY, SZ, CX, CY, CZ, Alpha: Single;
   end;
+  PVertexColor = ^TVertexColor;
+  TVertexColor = packed record
+    X, Y, Z, R, G, B, A: Single;
+  end;
   TVertexColorNorm = packed record
     X, Y, Z, R, G, B, A, NX, NY, NZ: Single;
   end;
@@ -151,7 +155,7 @@ type
     DrawPoly: function(VertexType: Integer; Vertices: Pointer; Count: Integer;
       Resource: LPCWSTR): Boolean; cdecl;
     SetDefaultAnchor: procedure(Width, Height: Integer); cdecl;
-    SetBlendMode: Pointer;
+    SetBlendMode: procedure(Mode: Integer); cdecl;
     SetMaterialShine: procedure(Shine: Single); cdecl;
     SetSamplerMode: procedure(Mode: Integer); cdecl;
     SetCullingState: procedure(Culling: Boolean); cdecl;
@@ -275,8 +279,11 @@ type
 
 const
   OBJECT_FLAG_FILTER_OBJECT = 1;
+  VERTEX_QUAD_COLOR = 5;
   VERTEX_QUAD_COLOR_NORM = 6;
   VERTEX_QUAD_TEXTURE = 7;
+  BLEND_NONE = 0;
+  BLEND_ADD = 1;
   OBJECT_FLAG_ENABLE_CAMERA = 2;
   CAMERA_MODE_OFF = 0;
   CAMERA_MODE_ON = 1;
