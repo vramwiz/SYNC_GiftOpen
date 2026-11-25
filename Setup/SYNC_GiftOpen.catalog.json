@@ -1,0 +1,92 @@
+[
+    {
+        "id":  "VRAMWIZ.SYNC_GiftOpen",
+        "name":  "プレゼント開封",
+        "type":  "フィルタプラグイン",
+        "summary":  "17種類の立体包装から画像を取り出す演出。紙吹雪や花火など11種類の付加演出を搭載",
+        "description":  "https://raw.githubusercontent.com/vramwiz/SYNC_GiftOpen/refs/heads/main/README.md",
+        "author":  "VRAMの魔術師",
+        "repoURL":  "https://github.com/vramwiz/SYNC_GiftOpen/",
+        "licenses":  [
+                         {
+                             "type":  "GPL-3.0",
+                             "isCustom":  false,
+                             "copyrights":  [
+                                                {
+                                                    "years":  "2026",
+                                                    "holder":  "VRAMの魔術師"
+                                                }
+                                            ],
+                             "licenseBody":  null
+                         }
+                     ],
+        "tags":  [
+                     "プレゼント",
+                     "3D",
+                     "映像演出"
+                 ],
+        "dependencies":  [
+
+                         ],
+        "images":  [
+
+                   ],
+        "installer":  {
+                          "source":  {
+                                         "direct":  null,
+                                         "github":  {
+                                                        "owner":  "vramwiz",
+                                                        "repo":  "SYNC_GiftOpen",
+                                                        "pattern":  "^SYNC_GiftOpen\\.zip$"
+                                                    }
+                                     },
+                          "install":  [
+                                          {
+                                              "action":  "download"
+                                          },
+                                          {
+                                              "action":  "extract"
+                                          },
+                                          {
+                                              "action":  "copy",
+                                              "from":  "{tmp}/SYNC_GiftOpen",
+                                              "to":  "{pluginsDir}/SYNC_GiftOpen"
+                                          }
+                                      ],
+                          "uninstall":  [
+                                            {
+                                                "action":  "delete",
+                                                "path":  "{pluginsDir}/SYNC_GiftOpen/SYNC_GiftOpen.auf2"
+                                            },
+                                            {
+                                                "action":  "delete",
+                                                "path":  "{pluginsDir}/SYNC_GiftOpen/README.md"
+                                            },
+                                            {
+                                                "action":  "delete",
+                                                "path":  "{pluginsDir}/SYNC_GiftOpen/LICENSE"
+                                            },
+                                            {
+                                                "action":  "delete",
+                                                "path":  "{pluginsDir}/SYNC_GiftOpen/THIRD_PARTY_NOTICES.md"
+                                            },
+                                            {
+                                                "action":  "delete",
+                                                "path":  "{pluginsDir}/SYNC_GiftOpen/ThirdParty/LICENSE.AviUtl2-SDK.txt"
+                                            }
+                                        ]
+                      },
+        "version":  [
+                        {
+                            "version":  "v1.0.0",
+                            "release_date":  "2026-11-25",
+                            "file":  [
+                                         {
+                                             "path":  "{pluginsDir}/SYNC_GiftOpen/SYNC_GiftOpen.auf2",
+                                             "XXH3_128":  "c29f88264e158c7d13fab23a175cc5b9"
+                                         }
+                                     ]
+                        }
+                    ]
+    }
+]
